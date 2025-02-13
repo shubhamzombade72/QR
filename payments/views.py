@@ -21,10 +21,18 @@ def create_razorpay_order(amount, receipt):
 	data = {
 		"amount": amount,
 		"currency": "INR",
-		"receipt": receipt
+		"receipt": receipt,
+		"notes": {
+			"payment_for": "Temple Donation"
+		}
 	}
-	response = requests.post(url, json=data, auth=auth)
-	return response.json()
+	try:
+		response = requests.post(url, json=data, auth=auth)
+		response.raise_for_status()  # Raises an HTTPError for bad responses
+		return response.json()
+	except requests.exceptions.RequestException as e:
+		print(f"Error creating Razorpay order: {str(e)}")
+		raise Exception(f"Error creating Razorpay order: {str(e)}")
 
 def verify_razorpay_signature(params_dict):
 	msg = f"{params_dict['razorpay_order_id']}|{params_dict['razorpay_payment_id']}"
@@ -45,13 +53,13 @@ def payment_form(request):
 			
 			if not all([name, mobile, amount]):
 				messages.error(request, 'Please fill all the required fields')
-				return redirect('payments:payment_form')
+				return render(request, 'payments/payment_form.html', {'show_qr': False})
 			
 			# Create or get donor
 			donor, created = Donor.objects.get_or_create(
-				mobile_number=mobile,
+				contact=mobile,
 				defaults={
-					'full_name': name,
+					'name': name,
 					'email': email
 				}
 			)
@@ -78,10 +86,14 @@ def payment_form(request):
 
 			# Create Razorpay order
 			razorpay_order = create_razorpay_order(
-				int(float(amount) * 100),
+				int(float(amount) * 100),  # Amount in paise
 				str(payment.id)
 			)
-
+			
+			if 'error' in razorpay_order:
+				messages.error(request, f"Razorpay Error: {razorpay_order['error']['description']}")
+				return render(request, 'payments/payment_form.html', {'show_qr': False})
+				
 			payment.transaction_id = razorpay_order['id']
 			payment.save()
 
@@ -90,7 +102,7 @@ def payment_form(request):
 				'show_qr': True,
 				'razorpay_order_id': razorpay_order['id'],
 				'razorpay_key_id': settings.RAZORPAY_KEY_ID,
-				'donor_name': name,
+				'donor_name': donor.name,
 				'donor_email': email if email else '',  # Add email to context
 				'donor_contact': mobile,
 				'amount': int(float(amount) * 100),  # Amount in paise
@@ -101,11 +113,9 @@ def payment_form(request):
 			
 		except Exception as e:
 			messages.error(request, f'Error creating Razorpay order: {str(e)}')
-			return redirect('payments:payment_form')
+			return render(request, 'payments/payment_form.html', {'show_qr': False})
 	else:
-		# Create Razorpay order before rendering the form
 		try:
-			# Placeholder amount - replace with logic to get default amount
 			amount = 100
 			razorpay_order = create_razorpay_order(
 				int(float(amount) * 100),
@@ -121,7 +131,8 @@ def payment_form(request):
 			return render(request, 'payments/payment_form.html', context)
 		except Exception as e:
 			messages.error(request, f'Error creating Razorpay order: {str(e)}')
-			return redirect('payments:payment_form')
+			return render(request, 'payments/payment_form.html', {'show_qr': False})
+
 
 @csrf_exempt
 def payment_webhook(request):
@@ -150,7 +161,7 @@ def payment_webhook(request):
 			try:
 				print("Finding payment record...")
 				payment = Payment.objects.get(transaction_id=razorpay_order_id)
-				print(f"Found payment for donor: {payment.donor.full_name}")
+				print(f"Found payment for donor: {payment.donor.name}")
 				
 				print("Verifying payment signature...")
 				params_dict = {
@@ -213,11 +224,8 @@ def payment_webhook(request):
 	
 	return JsonResponse({'status': 'error', 'message': 'Invalid request method'})
 
-def dashboard(request):
-    # Your view logic here
-    pass
-
 def initiate_payment(request):
+
     if request.method == "POST":
         amount = request.POST.get("amount")
         order = create_order(amount)
@@ -225,22 +233,13 @@ def initiate_payment(request):
     return render(request, "initiate_payment.html")
 
 def payment_callback(request):
-    if request.method == "POST":
-        response_data = request.POST
-        try:
-            verify_payment_signature(response_data)
-            # Payment is successful
-            return JsonResponse({"status": "Payment successful"})
-        except:
-            # Payment verification failed
-            return JsonResponse({"status": "Payment verification failed"})
-    return JsonResponse({"status": "Invalid request"})
-
-def some_view(request):
-    # ...existing code...
-    current_url = request.path
-    redirect_url = '/some-other-url/'
-    
-    if current_url != redirect_url:
-        return redirect(redirect_url)
-    # ...existing code...
+	if request.method == "POST":
+		response_data = request.POST
+		try:
+			verify_payment_signature(response_data)
+			# Payment is successful
+			return JsonResponse({"status": "Payment successful"})
+		except:
+			# Payment verification failed
+			return JsonResponse({"status": "Payment verification failed"})
+	return JsonResponse({"status": "Invalid request"})
