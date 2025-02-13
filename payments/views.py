@@ -10,13 +10,30 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from .models import Donor, DonationType, Payment, Receipt
 from .utils import generate_receipt_pdf, send_receipt_email
-import razorpay
 import json
+import requests
+import hmac
+import hashlib
 
-# Initialize Razorpay client
-razorpay_client = razorpay.Client(
-	auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
-)
+def create_razorpay_order(amount, receipt):
+	url = "https://api.razorpay.com/v1/orders"
+	auth = (settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET)
+	data = {
+		"amount": amount,
+		"currency": "INR",
+		"receipt": receipt
+	}
+	response = requests.post(url, json=data, auth=auth)
+	return response.json()
+
+def verify_razorpay_signature(params_dict):
+	msg = f"{params_dict['razorpay_order_id']}|{params_dict['razorpay_payment_id']}"
+	generated_signature = hmac.new(
+		settings.RAZORPAY_KEY_SECRET.encode(),
+		msg.encode(),
+		hashlib.sha256
+	).hexdigest()
+	return hmac.compare_digest(generated_signature, params_dict['razorpay_signature'])
 
 def payment_form(request):
 	if request.method == 'POST':
@@ -60,12 +77,11 @@ def payment_form(request):
 			)
 
 			# Create Razorpay order
-			data = {
-				"amount": int(float(amount) * 100),  # Amount in paise
-				"currency": "INR",
-				"receipt": str(payment.id) # Use payment ID as receipt
-			}
-			razorpay_order = razorpay_client.order.create(data=data)
+			razorpay_order = create_razorpay_order(
+				int(float(amount) * 100),
+				str(payment.id)
+			)
+
 			payment.transaction_id = razorpay_order['id']
 			payment.save()
 
@@ -91,12 +107,11 @@ def payment_form(request):
 		try:
 			# Placeholder amount - replace with logic to get default amount
 			amount = 100
-			data = {
-				"amount": int(float(amount) * 100),  # Amount in paise
-				"currency": "INR",
-				"receipt": "test_receipt" # Placeholder receipt - will be updated later
-			}
-			razorpay_order = razorpay_client.order.create(data=data)
+			razorpay_order = create_razorpay_order(
+				int(float(amount) * 100),
+				"test_receipt"
+			)
+
 			context = {
 				'show_qr': False,
 				'razorpay_order_id': razorpay_order['id'],
@@ -138,13 +153,13 @@ def payment_webhook(request):
 				print(f"Found payment for donor: {payment.donor.full_name}")
 				
 				print("Verifying payment signature...")
-				client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 				params_dict = {
 					'razorpay_order_id': razorpay_order_id,
 					'razorpay_payment_id': razorpay_payment_id,
 					'razorpay_signature': razorpay_signature
 				}
-				client.utility.verify_payment_signature(params_dict)
+				if not verify_razorpay_signature(params_dict):
+					return JsonResponse({'status': 'error', 'message': 'Invalid signature'})
 				print("Payment signature verified")
 				
 				payment.payment_status = 'SUCCESS'
@@ -201,3 +216,31 @@ def payment_webhook(request):
 def dashboard(request):
     # Your view logic here
     pass
+
+def initiate_payment(request):
+    if request.method == "POST":
+        amount = request.POST.get("amount")
+        order = create_order(amount)
+        return JsonResponse(order)
+    return render(request, "initiate_payment.html")
+
+def payment_callback(request):
+    if request.method == "POST":
+        response_data = request.POST
+        try:
+            verify_payment_signature(response_data)
+            # Payment is successful
+            return JsonResponse({"status": "Payment successful"})
+        except:
+            # Payment verification failed
+            return JsonResponse({"status": "Payment verification failed"})
+    return JsonResponse({"status": "Invalid request"})
+
+def some_view(request):
+    # ...existing code...
+    current_url = request.path
+    redirect_url = '/some-other-url/'
+    
+    if current_url != redirect_url:
+        return redirect(redirect_url)
+    # ...existing code...
