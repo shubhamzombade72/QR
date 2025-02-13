@@ -1,0 +1,11 @@
+Django==4.2.7
+Pillow==10.1.0
+reportlab==4.0.7
+django-crispy-forms==2.1
+crispy-bootstrap5==2023.10
+python-dotenv==1.0.0
+qrcode==7.4.2
+razorpay==1.4.1
+google-api-python-client==2.108.0
+google-auth-httplib2==0.1.1
+google-auth-oauthlib==1.1.0

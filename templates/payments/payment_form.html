@@ -1,0 +1,116 @@
+{% extends 'base.html' %}
+
+{% block title %}New Payment{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        {% if messages %}
+        <div class="messages mb-4">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">New Payment</h5>
+            </div>
+            <div class="card-body">
+                {% if not show_qr %}
+                <form method="post" id="paymentForm" action="{% url 'payments:payment_form' %}">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Full Name</label>
+                        <input type="text" class="form-control" id="name" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="mobile" class="form-label">Mobile Number</label>
+                        <input type="tel" class="form-control" id="mobile" name="mobile" pattern="[0-9]{10}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email (for receipt)</label>
+                        <input type="email" class="form-control" id="email" name="email">
+                        <small class="text-muted">We'll send your receipt to this email address</small>
+                    </div>
+                    <div class="mb-3">
+                        <label for="amount" class="form-label">Amount (₹)</label>
+                        <input type="number" class="form-control" id="amount" name="amount" min="1" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Proceed to Payment</button>
+                </form>
+                {% else %}
+                <div class="text-center">
+                    <h4>Complete Your Payment</h4>
+                    <p class="mb-3">Amount: ₹{{ payment.amount }}</p>
+                    <p class="mb-3">Transaction ID: {{ payment.transaction_id }}</p>
+                    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+                    <script>
+                        document.addEventListener('DOMContentLoaded', function() {
+                            var options = {
+                                "key": "{{ razorpay_key_id }}",
+                                "amount": "{{ amount }}",
+                                "currency": "INR",
+                                "name": "Temple Donation",
+                                "description": "Temple Donation Payment",
+                                "order_id": "{{ razorpay_order_id }}",
+                                "handler": function (response) {
+                                    console.log("Payment response received:", response);
+                                    const webhookUrl = '{% url "payments:payment_webhook" %}';
+                                    console.log("Using webhook URL:", webhookUrl);
+                                    
+                                    fetch(webhookUrl, {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'X-CSRFToken': '{{ csrf_token }}'
+                                        },
+                                        body: JSON.stringify({
+                                            razorpay_payment_id: response.razorpay_payment_id,
+                                            razorpay_order_id: response.razorpay_order_id,
+                                            razorpay_signature: response.razorpay_signature
+                                        })
+                                    })
+                                    .then(response => response.json())
+                                    .then(data => {
+                                        console.log("Webhook data:", data);
+                                        if (data.status === 'SUCCESS') {
+                                            alert('Payment successful! Your invoice will be sent shortly to your email.');
+                                            window.location.href = '/';
+                                        } else {
+                                            console.error("Payment failed:", data.message);
+                                            alert('Payment failed: ' + (data.message || 'Please try again.'));
+                                        }
+                                    })
+                                    .catch(error => {
+                                        console.error("Webhook error:", error);
+                                        alert('Error processing payment. Please check console for details.');
+                                    });
+                                },
+                                "prefill": {
+                                    "name": "{{ donor_name }}",
+                                    "email": "{{ donor_email }}",
+                                    "contact": "{{ donor_contact }}"
+                                },
+                                "theme": {
+                                    "color": "#FFD700"
+                                }
+                            };
+                            var rzp = new Razorpay(options);
+                            document.getElementById('rzp-button').addEventListener('click', function(e) {
+                                rzp.open();
+                                e.preventDefault();
+                            });
+                        });
+                    </script>
+                    <button id="rzp-button" class="btn btn-primary">Pay Now</button>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
